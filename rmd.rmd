@@ -1,0 +1,198 @@
+---
+title: "Previcoke"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+load("database")
+library(shiny)
+library(shinydashboard)
+library(DT)
+library(flexdashboard)
+library(knitr)
+library(dplyr)
+library(DBI)
+library(xml2)
+library(scales)
+library(tinytex)
+library(plotly)
+library(purrr)
+library(tibble)
+
+datatable2 <- function(x, vars = NULL, opts = NULL, ...) {
+  
+  names_x <- names(x)
+  if (is.null(vars)) stop("'vars' must be specified!")
+  pos <- match(vars, names_x)
+  if (any(map_chr(x[, pos], typeof) == "list"))
+    stop("list columns are not supported in datatable2()")
+  
+  pos <- pos[pos <= ncol(x)] + 1
+  rownames(x) <- NULL
+  if (nrow(x) > 0) x <- cbind(' ' = '&oplus;', x)
+  
+  # options
+  opts <- c(
+    opts, 
+    list(
+      columnDefs = list(
+        list(visible = FALSE, targets = c(0, pos)),
+        list(orderable = FALSE, className = 'details-control', targets = 1),
+        list(className = 'dt-left', targets = 1:3),
+        list(className = 'dt-right', targets = 4:ncol(x))
+      )
+    ))
+  
+  datatable(
+    x, 
+    ...,
+    escape = -2,
+    options = opts,
+    callback = JS(.callback2(x = x, pos = c(0, pos)))
+  )
+}
+
+.callback2 <- function(x, pos = NULL) {
+  
+  part1 <- "table.column(1).nodes().to$().css({cursor: 'pointer'});"
+  
+  part2 <- .child_row_table2(x, pos = pos)
+  
+  part3 <- 
+    "
+   table.on('click', 'td.details-control', function() {
+    var td = $(this), row = table.row(td.closest('tr'));
+    if (row.child.isShown()) {
+      row.child.hide();
+      td.html('&oplus;');
+    } else {
+      row.child(format(row.data())).show();
+      td.html('&ominus;');
+    }
+  });"
+  
+  paste(part1, part2, part3)
+} 
+
+.child_row_table2 <- function(x, pos = NULL) {
+  
+  names_x <- paste0(names(x), ":")
+  text <- "
+  var format = function(d) {
+    text = '<div><table >' + 
+  "
+  
+  for (i in seq_along(pos)) {
+    text <- paste(text, glue::glue(
+      "'<tr>' +
+          '<td>' + '{names_x[pos[i]]}' + '</td>' +
+          '<td>' + d[{pos[i]}] + '</td>' +
+        '</tr>' + " ))
+  }
+  
+  paste0(text,
+         "'</table></div>'
+      return text;};"
+  )
+}
+
+
+
+
+
+con <- dbConnect(RSQLite::SQLite(),"relatoriodb")
+tabel <- dbReadTable(con,'tabel')
+stbd<-dbReadTable(con,"stdb")
+emissores<-dbReadTable(con,"emissores")
+limites <- dbReadTable(con,"limites")
+tabelaenquadramento<-dbReadTable(con,"tabelaenquadramento")
+
+planocd20190731<-dbReadTable(con,"planocd20190731")
+planocd20190731 <-
+  planocd20190731 %>% group_by(liquidez) %>% dplyr::summarize(
+    liquidity = sum(valorfinanceiro) / (sum(planocd20190731$valorfinanceiro))) %>% summarize(
+      "d+1" = sum(liquidity[liquidez <= 1]),
+      "d+63" = sum(liquidity[liquidez <= 63]),
+      "d+365" = sum(liquidity[liquidez <= 366])
+    ) %>% t %>% as.data.frame() %>% rownames_to_column %>% mutate("regra" =
+                                                                    c(0.15, 0.50, 0.85))
+    
+
+names(planocd20190731)<-c("dias","atual","regra")
+
+```
+
+Row {data-height=200}
+-------------------------------------------------------------
+
+### Chart 1
+
+```{r}
+# <-tabel %>% select(Regra,Legal,"PolÃ.tica", "Perfil.I", "Perfil.II", "Perfil.III"        , "sum")
+datatable2(
+  x = stbd, 
+  vars = c("Regra"),
+  opts = list(bPaginate = F,dom="t")
+)
+# DT::datatable(stbd %>% filter(X2 != "NA"),options = list(dom="t", bPaginate=F),rownames = F) %>% formatPercentage(c(3:10),digits=2)
+# stbd %>% filter(X2 != "NA") %>% kable
+```
+
+Row {data-height=800}
+--------------------------------------------------------------
+
+### 
+
+```{r}
+
+
+tabBox(width=12,
+      title = "First tabBox",
+      id = "tabset1",
+      tabPanel("TabA", datatable2(
+  x = stbd , 
+  vars = c("Regra"),
+  opts = list(bPaginate = F,dom="t")
+)),
+      tabPanel("TabB",datatable2(
+  x = stbd , 
+  vars = c("Regra"),
+  opts = list(bPaginate = F,dom="t")
+))
+    )
+
+p1<-planocd20190731 %>% plot_ly(x=~dias,y=~atual,type='bar',name='atual') %>% add_trace(y=~regra,name="regra") %>% layout(yaxis=list(tittle='count'),barmode='group')%>% config(displayModeBar= F)
+tabBox(width=12,
+      title = "First tabBox",
+      id = "tabset2",
+      tabPanel("TabA", p1 ),
+      tabPanel("TabB",p1)
+    )
+
+```
+
+
+
+```{r}
+# planocd20190731<-dbReadTable(con,"planocd20190731")
+# planocd20190731 <-
+#   planocd20190731 %>% group_by(liquidez) %>% dplyr::summarize(
+#     liquidity = sum(valorfinanceiro) / (sum(planocd20190731$valorfinanceiro))) %>% summarize(
+#       "d+1" = sum(liquidity[liquidez <= 1]),
+#       "d+63" = sum(liquidity[liquidez <= 63]),
+#       "d+365" = sum(liquidity[liquidez <= 366])
+#     ) %>% t %>% as.data.frame() %>% rownames_to_column %>% mutate("regra" =
+#                                                                     c(0.15, 0.50, 0.85))
+#     
+# 
+# names(planocd20190731)<-c("dias","atual","regra")
+# 
+# 
+# 
+# planocd20190731 %>% plot_ly(x=~dias,y=~atual,type='bar',name='atual') %>% add_trace(y=~regra,name="regra") %>% layout(yaxis=list(tittle='count'),barmode='group')
+
+
+```
